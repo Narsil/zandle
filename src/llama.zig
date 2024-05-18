@@ -3,7 +3,7 @@ const z = @import("lib.zig");
 const head_size = 128;
 const num_heads = 32;
 const num_kv_heads = 8;
-const softmax_scale = @sqrt(@as(f32, head_size));
+const SOFTMAX_SCALE = @sqrt(@as(f32, head_size));
 const H = num_heads * head_size;
 const HKV = num_kv_heads * head_size;
 const hidden_size = z.Dim{ .static = H };
@@ -14,9 +14,8 @@ const seqlen = z.Dim{ .dyn = 's' };
 const device = z.Device.cpu;
 const dtype = z.Dtype.f32;
 const HiddenStates = Tensor(seqlen, hidden_size);
-const Rotary = Tensor(seqlen, z.Dim{ .static = head_size });
+const Rotary = Tensor(seqlen, z.Dim{ .static = head_size / 2 });
 const KState = Tensor(seqlen, gqa_size);
-const VState = Tensor(seqlen, gqa_size);
 const CuSeqlen = z.Tensor(1, [1]z.Dim{seqlen}, device, z.Dtype.i32);
 const HiddenStates2 = Tensor(seqlen, hidden_size2);
 const HiddenStates3 = Tensor(seqlen, hidden_size3);
@@ -71,6 +70,24 @@ const Mlp = struct {
     }
 };
 
+pub fn rotary_embed(q: HiddenStates, k: KState, cosin: Rotary) void {
+    _ = cosin;
+    _ = k;
+    _ = q;
+}
+
+pub fn attention(q: HiddenStates, k: KState, v: KState, cu_seqlen: CuSeqlen, max_s: usize, softmax_scale: f32) t: {
+    const Return = @TypeOf(q);
+    break :t Return;
+} {
+    _ = softmax_scale;
+    _ = max_s;
+    _ = cu_seqlen;
+    _ = v;
+    _ = k;
+    return q;
+}
+
 const Attention = struct {
     qkv: Qkv,
     o_proj: Proj,
@@ -89,10 +106,10 @@ const Attention = struct {
         const splits = qkv.split(1, 3, [3]z.Dim{ hidden_size, gqa_size, gqa_size });
         const q: HiddenStates = splits[0];
         const k: KState = splits[1];
-        const v: VState = splits[2];
-        z.rotary_embed(q, k, cossin);
+        const v: KState = splits[2];
+        rotary_embed(q, k, cossin);
         // z.paged_attention(k, v, k_cache, v_cache, slots);
-        const attn_output = z.attention(q, k, v, cu_seqlen, max_s, softmax_scale);
+        const attn_output = attention(q, k, v, cu_seqlen, max_s, SOFTMAX_SCALE);
         const out: HiddenStates = self.o_proj.forward(seqlen, attn_output);
         return out;
     }
@@ -101,11 +118,11 @@ const Attention = struct {
 pub fn main() !void {
     const hidden_states = HiddenStates.zeros();
     const mlp = Mlp.zeros();
-    const attention = Attention.zeros();
+    const attn = Attention.zeros();
     const cossin = undefined;
     const cu_seqlen = undefined;
     const max_s = 1000;
-    const final: HiddenStates = attention.forward(hidden_states, cossin, cu_seqlen, max_s);
+    const final: HiddenStates = attn.forward(hidden_states, cossin, cu_seqlen, max_s);
     const final2: HiddenStates = mlp.forward(final);
     _ = final2;
 }

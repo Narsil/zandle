@@ -157,8 +157,8 @@ pub fn Tensor(comptime rank: usize, comptime shape: Rank(rank), comptime device:
             std.debug.assert(shape[dim].value() % into == 0);
             var newshape = shape;
             newshape[dim] = Dim{ .static = newshape[dim].value() / into };
-            const Return = Tensor(rank, newshape, device, dtype);
-            break :t [into]Return;
+            const Return = [into]Tensor(rank, newshape, device, dtype);
+            break :t Return;
         } {
             _ = self;
             return undefined;
@@ -220,24 +220,6 @@ pub fn Tensor(comptime rank: usize, comptime shape: Rank(rank), comptime device:
             return prod * dtype.size();
         }
     };
-}
-
-pub fn rotary_embed(q: anytype, k: anytype, cosin: anytype) void {
-    _ = cosin;
-    _ = k;
-    _ = q;
-}
-
-pub fn attention(q: anytype, k: anytype, v: anytype, cu_seqlen: anytype, max_s: usize, softmax_scale: f32) t: {
-    const Return = @TypeOf(q);
-    break :t Return;
-} {
-    _ = softmax_scale;
-    _ = max_s;
-    _ = cu_seqlen;
-    _ = v;
-    _ = k;
-    return q;
 }
 
 test "basic add functionality" {
