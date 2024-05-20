@@ -1,322 +1,228 @@
-// const std = @import("std");
-// pub const cu = @cImport({
-//     @cInclude("cuda.h");
-// });
-// const cuda_allocator = @import("cuda_allocator.zig");
-//
-// pub const DeviceType = enum {
-//     cpu,
-//     cuda,
-// };
-//
-// pub const Device = union(DeviceType) {
-//     cpu: void,
-//     cuda: comptime_int,
-//
-//     pub fn format(
-//         self: Device,
-//         comptime fmt: []const u8,
-//         options: std.fmt.FormatOptions,
-//         writer: anytype,
-//     ) !void {
-//         _ = fmt;
-//         _ = options;
-//
-//         const val = switch (self) {
-//             .cpu => "cpu",
-//             .cuda => "cuda",
-//         };
-//
-//         try writer.print("{s}", .{val});
-//     }
-//
-//     pub fn data_type(comptime self: Device, comptime dtype: Dtype) type {
-//         const val = switch (self) {
-//             .cpu => []dtype.concrete_type(),
-//             .cuda => cu.CUdeviceptr,
-//         };
-//         return val;
-//     }
-//
-//     pub fn allocator(comptime self: Device) type {
-//         const val = switch (self) {
-//             .cpu => std.mem.Allocator,
-//             .cuda => cuda_allocator.CudaAllocator,
-//         };
-//         return val;
-//     }
-//
-//     pub fn synchronize(
-//         self: Device,
-//     ) !void {
-//         _ = self;
-//     }
-// };
-// pub const Dtype = enum {
-//     f32,
-//     f16,
-//     i32,
-//     const Self = @This();
-//     pub fn size(self: Dtype) usize {
-//         switch (self) {
-//             Dtype.f32 => {
-//                 return 4;
-//             },
-//             Dtype.f16 => {
-//                 return 2;
-//             },
-//             Dtype.i32 => {
-//                 return 4;
-//             },
-//         }
-//     }
-//
-//     pub fn concrete_type(comptime self: Dtype) type {
-//         switch (self) {
-//             Dtype.f32 => {
-//                 return f32;
-//             },
-//             Dtype.f16 => {
-//                 return f16;
-//             },
-//             Dtype.i32 => {
-//                 return i32;
-//             },
-//         }
-//     }
-//
-//     pub fn format(
-//         self: Dtype,
-//         comptime fmt: []const u8,
-//         options: std.fmt.FormatOptions,
-//         writer: anytype,
-//     ) !void {
-//         _ = fmt;
-//         _ = options;
-//
-//         const val = switch (self) {
-//             .f32 => "f32",
-//             .f16 => "f16",
-//             .i32 => "i32",
-//         };
-//
-//         try writer.print("{s}", .{val});
-//     }
-// };
-//
-// const Rank0 = Rank(0);
-// const Rank1 = Rank(1);
-// const Rank2 = Rank(2);
-// const Rank3 = Rank(3);
-//
-// pub const Dim = union(enum) {
-//     dyn: u8, // Char
-//     static: usize,
-//
-//     pub fn value(self: Dim) usize {
-//         const val = switch (self) {
-//             .dyn => 0,
-//             .static => self.static,
-//         };
-//         return val;
-//     }
-//
-//     pub fn format(
-//         self: Dim,
-//         comptime fmt: []const u8,
-//         options: std.fmt.FormatOptions,
-//         writer: anytype,
-//     ) !void {
-//         _ = fmt;
-//         _ = options;
-//
-//         try writer.print("{}", .{self.value()});
-//     }
-// };
-//
-// pub fn Rank(comptime n: comptime_int) type {
-//     const s = [n]Dim;
-//     return s;
-// }
-//
-// fn _total_size(comptime rank: comptime_int, comptime shape: Rank(rank)) usize {
-//     var total: usize = 1;
-//     for (shape) |dim| {
-//         total *= dim.value();
-//     }
-//     return total;
-// }
-//
-// pub fn Tensor(comptime rank: usize, comptime shape: Rank(rank), comptime device: Device, comptime dtype: Dtype) type {
-//     return struct {
-//         rank: usize,
-//         shape: Rank(rank),
-//         device: Device,
-//         dtype: Dtype,
-//         data: device.data_type(dtype),
-//
-//         const Self = @This();
-//         pub fn zeros(allocator: device.allocator()) !Self {
-//             const data = try allocator.alloc(dtype.concrete_type(), _total_size(rank, shape));
-//             // TODO empty vs zero
-//             //@memset(data, 0);
-//             return Self{ .rank = rank, .shape = shape, .device = device, .dtype = dtype, .data = data };
-//         }
-//
-//         pub fn free(self: Self, allocator: device.allocator()) void {
-//             allocator.free(self.data);
-//         }
-//
-//         pub fn format(
-//             self: Self,
-//             comptime fmt: []const u8,
-//             options: std.fmt.FormatOptions,
-//             writer: anytype,
-//         ) !void {
-//             _ = self;
-//             _ = fmt;
-//             _ = options;
-//
-//             try writer.print("Tensor([", .{});
-//             for (shape, 0..) |dim, i| {
-//                 if (i == 0) {
-//                     try writer.print("{}", .{dim});
-//                 } else {
-//                     try writer.print(", {}", .{dim});
-//                 }
-//             }
-//             try writer.print("], {}, {})", .{ device, dtype });
-//         }
-//
-//         pub fn add(self: Self, other: Self) void {
-//             std.debug.assert(self.shape.len == other.shape.len);
-//             for (self.shape, other.shape) |d1, d2| {
-//                 std.debug.assert(std.meta.eql(d1, d2));
-//             }
-//         }
-//
-//         const Info = struct {
-//             dim: usize,
-//             into: usize,
-//         };
-//         pub fn split2(self: Self, comptime info: Info) t: {
-//             const dim = info.dim;
-//             const into = info.into;
-//             std.debug.assert(shape[dim].value() % into == 0);
-//             var newshape = shape;
-//             newshape[dim] = Dim{ .static = newshape[dim].value() / into };
-//             const Return = [into]Tensor(rank, newshape, device, dtype);
-//             break :t Return;
-//         } {
-//             _ = self;
-//             return undefined;
-//         }
-//
-//         pub fn split(self: Self, comptime dim: usize, comptime dims: usize, comptime into_dims: [dims]Dim) t: {
-//             var sum = 0;
-//             for (into_dims) |into_dim| {
-//                 sum = sum + into_dim.value();
-//             }
-//             // std.debug.assert(shape[dim].value() == sum);
-//
-//             var newshape = shape;
-//             var types: [dims]type = undefined;
-//             for (into_dims, 0..) |into_dim, i| {
-//                 newshape[dim] = into_dim;
-//                 types[i] = Tensor(rank, newshape, device, dtype);
-//             }
-//             const Return = std.meta.Tuple(&types);
-//             break :t Return;
-//         } {
-//             _ = self;
-//             return undefined;
-//         }
-//
-//         pub fn get_rank(self: Self) usize {
-//             return self.shape.len;
-//         }
-//
-//         pub fn swiglu(self: Self) Self {
-//             return self;
-//         }
-//
-//         pub fn mul(self: Self, other: Self) Self {
-//             _ = other;
-//             return self;
-//         }
-//
-//         pub fn matmul_t(self: Self, comptime out: Dim, other: Tensor(rank, [2]Dim{ out, shape[shape.len - 1] }, device, dtype), output: Tensor(rank, [rank]Dim{ shape[shape.len - 2], out }, device, dtype)) void {
-//             _ = output;
-//             _ = other;
-//             _ = self;
-//         }
-//
-//         pub fn copy_to(
-//             self: Self,
-//             comptime other_device: Device,
-//             other: Tensor(rank, shape, other_device, dtype),
-//         ) void {
-//             _ = other;
-//             _ = self;
-//         }
-//
-//         pub fn total_size(self: Self) usize {
-//             _ = self;
-//             return _total_size(rank, shape);
-//         }
-//
-//         pub fn byte_size(self: Self) usize {
-//             var prod: usize = 1;
-//             for (self.shape) |dim| {
-//                 prod *= dim.value();
-//             }
-//             return prod * dtype.size();
-//         }
-//     };
-// }
-//
-// test "basic add functionality" {
-//     const testing = std.testing;
-//     const dim1 = Dim{ .static = 2 };
-//     const dim2 = Dim{ .static = 3 };
-//     const dim3 = Dim{ .static = 4 };
-//
-//     const tensor = Tensor(2, [2]Dim{ dim1, dim2 }, Device.cpu, Dtype.f32).zeros();
-//     try testing.expect(tensor.device == Device.cpu);
-//     try testing.expect(tensor.shape[0].value() == 2);
-//     try testing.expect(tensor.rank == 2);
-//     try testing.expect(tensor.total_size() == 6);
-//     try testing.expect(tensor.byte_size() == 24);
-//
-//     const tensor2 = Tensor(3, [3]Dim{ dim1, dim2, dim3 }, Device.cpu, Dtype.f16).zeros();
-//     try testing.expect(tensor2.device == Device.cpu);
-//     try testing.expect(tensor2.shape[0].value() == 2);
-//     try testing.expect(tensor2.rank == 3);
-//     try testing.expect(tensor2.total_size() == 24);
-//     try testing.expect(tensor2.byte_size() == 48);
-//
-//     const splits = tensor2.split(0, 2);
-//     const left = splits[0];
-//     const right = splits[1];
-//     try testing.expect(left.rank == 3);
-//     try testing.expect(left.shape[0].value() == 1);
-//     try testing.expect(right.shape[0].value() == 1);
-//
-//     const tensor3 = Tensor(3, [3]Dim{ dim1, dim2, dim3 }, Device.cpu, Dtype.f16).zeros();
-//     try testing.expect(tensor3.rank == 3);
-//     try testing.expect(tensor3.shape[0].value() == 2);
-//     try testing.expect(tensor3.shape[1].value() == 3);
-//
-//     const newsplits = tensor2.split(1, 3);
-//     const l = newsplits[0];
-//     const m = newsplits[1];
-//     const r = newsplits[2];
-//     try testing.expect(l.shape[0].value() == 2);
-//     try testing.expect(l.shape[1].value() == 1);
-//     try testing.expect(m.shape[1].value() == 1);
-//     try testing.expect(r.shape[1].value() == 1);
-//
-//     // comptime assert
-//     // const splits2 = tensor2.split(1, 2);
-//     // try testing.expect(splits2.len == 3);
-// }
+const std = @import("std");
+pub const cu = @cImport({
+    @cInclude("cuda.h");
+});
+pub const gemm = @cImport({
+    @cInclude("gemm.h");
+});
+pub const err = @import("error.zig");
+pub fn SizedPtr(comptime T: type, comptime n: usize) type {
+    return struct {
+        devptr: cu.CUdeviceptr,
+        pub const Ptr = cu.CUdeviceptr;
+
+        const Self = @This();
+        fn ptr(self: Self) Ptr {
+            return self.devptr;
+        }
+
+        fn byte_size(self: Self) usize {
+            _ = self;
+            return n * @sizeOf(T);
+        }
+    };
+}
+
+pub fn CpuSizedPtr(comptime T: type, comptime n: usize) type {
+    return struct {
+        dataptr: []T,
+        pub const Ptr = []T;
+        const Self = @This();
+        fn ptr(self: Self) Ptr {
+            return self.dataptr;
+        }
+        fn byte_size(self: Self) usize {
+            _ = self;
+            return n * @sizeOf(T);
+        }
+    };
+}
+
+pub const Device = union(enum) {
+    cpu,
+    cuda: usize,
+    const Self = @This();
+    pub fn device_type(comptime self: Self) type {
+        switch (self) {
+            .cpu => return Cpu,
+            .cuda => return Cuda(self.cuda),
+        }
+    }
+    pub fn data_type(comptime self: Self, comptime T: type, comptime n: usize) type {
+        switch (self) {
+            .cpu => return CpuSizedPtr(T, n),
+            .cuda => return SizedPtr(T, n),
+        }
+    }
+};
+
+pub fn Cuda(comptime device_id: c_int) type {
+    return struct {
+        device_id: c_int,
+        device: cu.CUdevice,
+        context: cu.CUcontext,
+        stream: cu.CUstream,
+        const Self = @This();
+
+        pub const device_enum = Device{ .cuda = device_id };
+        pub fn create() !Self {
+            var device: cu.CUdevice = undefined;
+            var context: cu.CUcontext = undefined;
+            var stream: cu.CUstream = undefined;
+
+            try err.Cuda(cu.cuInit(0));
+            try err.Cuda(cu.cuDeviceGet(&device, device_id));
+            try err.Cuda(cu.cuDevicePrimaryCtxRetain(&context, device));
+            try err.Cuda(cu.cuCtxSetCurrent(context));
+            try err.Cuda(cu.cuStreamCreate(&stream, cu.CU_STREAM_DEFAULT));
+            return @This(){
+                .device_id = device_id,
+                .device = device,
+                .context = context,
+                .stream = stream,
+            };
+        }
+
+        pub fn copy_from(self: Self, ptr: cu.CUdeviceptr, otherdevice: Device, other: anytype) !void {
+            switch (otherdevice) {
+                .cpu => {
+                    try err.Cuda(cu.cuMemcpyHtoDAsync_v2(ptr, @ptrCast(other.ptr()), other.byte_size(), self.stream));
+                },
+                .cuda => {
+                    @panic("Not implemented yet");
+                },
+            }
+        }
+
+        pub fn copy_to_cpu(self: Self, ptr: anytype, devptr: cu.CUdeviceptr, byte_size: usize) !void {
+            try err.Cuda(cu.cuMemcpyDtoHAsync_v2(@ptrCast(ptr), devptr, byte_size, self.stream));
+        }
+
+        pub const Allocator = struct {
+            device: Self,
+
+            fn alloc(self: Allocator, comptime T: type, comptime n: usize) !SizedPtr(T, n) {
+                var ptr: cu.CUdeviceptr = undefined;
+                const bytes = n * @sizeOf(T);
+                try err.Cuda(cu.cuMemAllocAsync(&ptr, bytes, self.device.stream));
+                return SizedPtr(T, n){ .devptr = ptr };
+            }
+
+            fn zero_alloc(self: Allocator, comptime T: type, comptime n: usize) !SizedPtr(T, n) {
+                const ptr = try self.alloc(T, n);
+                try err.Cuda(cu.cuMemsetD8Async(ptr.ptr, 0, ptr.len(), self.device.stream));
+                return ptr;
+            }
+
+            pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) !Tensor(device_enum, T, rank, shape) {
+                const nelements = comptime total_size(&shape);
+                const data = try self.alloc(T, nelements);
+                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+            }
+
+            pub fn free(self: Allocator, ptr: anytype) void {
+                const e = cu.cuMemFreeAsync(ptr.data.devptr, self.device.stream);
+                _ = e;
+            }
+        };
+
+        pub fn allocator(self: Self) Allocator {
+            return Allocator{ .device = self };
+        }
+
+        pub fn synchronize(self: Self) !void {
+            _ = self;
+            try err.Cuda(cu.cuCtxSynchronize());
+        }
+
+        pub fn matmul_t(self: Self, comptime T: type, m: usize, n: usize, k: usize, alpha: T, a_data: anytype, lda: usize, b_data: anytype, ldb: usize, beta: T, out_data: anytype, ldc: usize) void {
+            gemm.launch_simple_gemm_tt_half(m, n, k, @ptrCast(@alignCast(&alpha)), a_data.devptr, lda, b_data.devptr, ldb, @ptrCast(@alignCast(&beta)), out_data.devptr, ldc, @ptrCast(self.stream));
+        }
+    };
+}
+
+pub const Cpu = struct {
+    pub const device_enum = Device{ .cpu = undefined };
+    const Self = @This();
+    const Allocator = struct {
+        alloc: std.mem.Allocator,
+        device: Cpu,
+        pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) !Tensor(device_enum, T, rank, shape) {
+            const n = comptime total_size(&shape);
+            const slice = try self.alloc.alloc(T, n);
+            // @memset(slice, 0);
+            const data = CpuSizedPtr(T, n){ .dataptr = slice };
+            return Tensor(device_enum, T, rank, shape).init(data, self.device);
+        }
+        pub fn free(self: Allocator, data: anytype) void {
+            self.alloc.free(data.data.dataptr);
+        }
+    };
+
+    pub fn allocator(self: Self, alloc: std.mem.Allocator) Allocator {
+        _ = self;
+        return Allocator{ .alloc = alloc, .device = Cpu{} };
+    }
+
+    pub fn copy_from(self: Self, ptr: anytype, otherdevice: Device, other: anytype) !void {
+        _ = self;
+        switch (otherdevice) {
+            .cuda => {
+                try other.device.copy_to_cpu(ptr, other.ptr(), other.byte_size());
+            },
+            .cpu => {
+                @panic("Not implemented yet");
+            },
+        }
+    }
+};
+
+fn total_size(shape: []const usize) usize {
+    var total = 1;
+    for (shape) |dim| {
+        total *= dim;
+    }
+    return total;
+}
+
+pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) type {
+    const nelements = total_size(&shape);
+    const DataType = device.data_type(T, nelements);
+    const DeviceType = device.device_type();
+    return struct {
+        device: DeviceType,
+        data: DataType,
+        const Self = @This();
+
+        fn init(data: device.data_type(T, nelements), realdevice: anytype) !Self {
+            return Self{ .data = data, .device = realdevice };
+        }
+
+        fn ptr(self: Self) DataType.Ptr {
+            return self.data.ptr();
+        }
+
+        fn byte_size(self: Self) usize {
+            return self.data.byte_size();
+        }
+
+        /// TODO Make this easier to use by doing type reflection on other directly
+        pub fn copy_from_device(self: Self, comptime otherdevice: Device, other: *const Tensor(otherdevice, T, rank, shape)) !void {
+            return self.device.copy_from(self.data.ptr(), otherdevice, other);
+        }
+
+        pub fn matmul_t(self: Self, comptime outdim: usize, other: Tensor(device, T, 2, [2]usize{ outdim, shape[0] }), out: Tensor(device, T, 2, [2]usize{ shape[0], outdim }), realdevice: anytype) !void {
+            std.debug.assert(rank == 2);
+            const m = shape[0];
+            const k = shape[shape.len - 1];
+            const n = outdim;
+            const lda = (k + 16 - 1) / 16;
+            const ldb = (n + 16 - 1) / 16;
+            const ldc = (n + 16 - 1) / 16;
+            _ = ldc;
+            const alpha: T = 1.0;
+            const beta: T = 0.0;
+            realdevice.matmul_t(T, m, n, k, alpha, self.data, lda, other.data, ldb, beta, out.data, ldb);
+        }
+    };
+}
