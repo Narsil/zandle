@@ -3,7 +3,7 @@ const std = @import("std");
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -67,4 +67,70 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const tool_run = b.addSystemCommand(&.{"nvcc"});
+    const cwd = std.fs.cwd();
+    const path = "./zig-out/lib";
+    try cwd.makePath(path);
+    const location = try std.fmt.allocPrint(b.allocator, "{s}/libtkgemm.so", .{path});
+    tool_run.addArgs(&.{
+        "-o",
+        location,
+        "--shared",
+        "--gpu-architecture",
+        "sm_89",
+        "src/gemm.cu",
+        "-IThunderKittens/src/",
+        "--expt-relaxed-constexpr",
+        "--std=c++20",
+    });
+    tool_run.expectExitCode(0);
+    const dependency: []const u8 = "src/gemm.cu";
+    const dependencies = [1][]const u8{dependency};
+    tool_run.extra_file_dependencies = &dependencies;
+
+    // Creates a step for unit testing. This only builds the test executable
+    // but does not run it.
+    const matmul_run = b.addExecutable(.{
+        .name = "zandle_matmul",
+        .root_source_file = .{ .path = "src/matmul.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    const cuda_path: []const u8 = try std.process.getEnvVarOwned(b.allocator, "CUDA");
+    const cuda_include_dir = try std.fmt.allocPrint(b.allocator, "{s}/include", .{cuda_path});
+    const cuda_lib_dir = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{cuda_path});
+    matmul_run.addIncludePath(.{ .path = cuda_include_dir });
+    matmul_run.addIncludePath(.{ .path = "src/" });
+    matmul_run.addLibraryPath(.{ .path = "zig-out/lib/" });
+    matmul_run.addLibraryPath(.{ .path = cuda_lib_dir });
+    matmul_run.linkSystemLibrary("cuda");
+    matmul_run.linkSystemLibrary("tkgemm");
+    matmul_run.linkLibCpp();
+    matmul_run.linkLibC();
+    matmul_run.step.dependOn(&tool_run.step);
+    b.installArtifact(matmul_run);
+
+    // This *creates* a Run step in the build graph, to be executed when another
+    // step is evaluated that depends on it. The next line below will establish
+    // such a dependency.
+    const run_matmul = b.addRunArtifact(matmul_run);
+
+    // By making the run step depend on the install step, it will be run from the
+    // installation directory rather than directly from within the cache directory.
+    // This is not necessary, however, if the application depends on other installed
+    // files, this ensures they will be present and in the expected location.
+    run_matmul.step.dependOn(b.getInstallStep());
+
+    // This allows the user to pass arguments to the application in the build
+    // command itself, like this: `zig build run -- arg1 arg2 etc`
+    if (b.args) |args| {
+        run_matmul.addArgs(args);
+    }
+
+    // Similar to creating the run step earlier, this exposes a `test` step to
+    // the `zig build --help` menu, providing a way for the user to request
+    // running the unit tests.
+    const matmul_step = b.step("matmul", "Run matmul example");
+    matmul_step.dependOn(&run_matmul.step);
 }
