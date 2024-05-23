@@ -4,9 +4,9 @@ const z = @import("lib.zig");
 pub fn main() !void {
     const dtype = f16;
     const rank = 2;
-    const M = 8;
-    const N = 8;
-    const K = 8;
+    const M = z.Dim{ .value = 8 };
+    const N = z.Dim{ .value = 8 };
+    const K = z.Dim{ .value = 8 };
 
     const cuda_0 = try z.Cuda(0).create();
     const gpu_allocator = cuda_0.allocator();
@@ -19,36 +19,36 @@ pub fn main() !void {
     }
     const cpu_allocator = cpu.allocator(gpa.allocator());
 
-    const cpu_A = try cpu_allocator.empty(f16, rank, [rank]usize{ M, K });
+    const cpu_A = try cpu_allocator.empty(f16, rank, [rank]z.Dim{ M, K });
     defer cpu_allocator.free(cpu_A);
     for (cpu_A.data.dataptr, 0..) |*ap, i| {
         ap.* = @as(dtype, @floatFromInt(i));
     }
 
-    const A = try gpu_allocator.empty(f16, rank, [rank]usize{ M, K });
+    const A = try gpu_allocator.empty(f16, rank, [rank]z.Dim{ M, K });
     defer gpu_allocator.free(A);
     try A.copy_from_device(@TypeOf(cpu).device_enum, &cpu_A);
-    const cpu_B = try cpu_allocator.empty(f16, rank, [rank]usize{ N, K });
+    const cpu_B = try cpu_allocator.empty(f16, rank, [rank]z.Dim{ N, K });
     defer cpu_allocator.free(cpu_B);
     for (cpu_B.data.dataptr, 0..) |*bp, i| {
-        const j = i % K;
-        const ii = i / K;
-        const i_transposed = j * N + ii;
+        const j = i % K.value;
+        const ii = i / K.value;
+        const i_transposed = j * N.value + ii;
         bp.* = @as(dtype, @floatFromInt(i_transposed));
     }
 
-    const B = try gpu_allocator.empty(f16, rank, [rank]usize{ M, K });
+    const B = try gpu_allocator.empty(f16, rank, [rank]z.Dim{ M, K });
     defer gpu_allocator.free(B);
     try B.copy_from_device(@TypeOf(cpu).device_enum, &cpu_B);
 
-    const C = try gpu_allocator.empty(f16, 2, [2]usize{ M, N });
+    const C = try gpu_allocator.empty(f16, 2, [2]z.Dim{ M, N });
     defer gpu_allocator.free(C);
 
     try cuda_0.synchronize();
 
     try A.matmul_t(N, B, C, cuda_0);
 
-    const cpu_C = try cpu_allocator.empty(f16, rank, [rank]usize{ M, N });
+    const cpu_C = try cpu_allocator.empty(f16, rank, [rank]z.Dim{ M, N });
     defer cpu_allocator.free(cpu_C);
     try cpu_C.copy_from_device(@TypeOf(cuda_0).device_enum, &C);
 

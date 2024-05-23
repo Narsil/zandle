@@ -6,6 +6,9 @@ pub const gemm = @cImport({
     @cInclude("gemm.h");
 });
 pub const err = @import("error.zig");
+
+pub const Dim = struct { value: usize };
+
 pub fn SizedPtr(comptime T: type, comptime n: usize) type {
     return struct {
         devptr: cu.CUdeviceptr,
@@ -114,7 +117,7 @@ pub fn Cuda(comptime device_id: c_int) type {
                 return ptr;
             }
 
-            pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) !Tensor(device_enum, T, rank, shape) {
+            pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
                 const nelements = comptime total_size(&shape);
                 const data = try self.alloc(T, nelements);
                 return Tensor(device_enum, T, rank, shape).init(data, self.device);
@@ -147,7 +150,7 @@ pub const Cpu = struct {
     const Allocator = struct {
         alloc: std.mem.Allocator,
         device: Cpu,
-        pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) !Tensor(device_enum, T, rank, shape) {
+        pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
             const n = comptime total_size(&shape);
             const slice = try self.alloc.alloc(T, n);
             // @memset(slice, 0);
@@ -177,15 +180,15 @@ pub const Cpu = struct {
     }
 };
 
-fn total_size(shape: []const usize) usize {
+fn total_size(shape: []const Dim) usize {
     var total = 1;
     for (shape) |dim| {
-        total *= dim;
+        total *= dim.value;
     }
     return total;
 }
 
-pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, comptime shape: [rank]usize) type {
+pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) type {
     const nelements = total_size(&shape);
     const DataType = device.data_type(T, nelements);
     const DeviceType = device.device_type();
@@ -211,11 +214,11 @@ pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, c
             return self.device.copy_from(self.data.ptr(), otherdevice, other);
         }
 
-        pub fn matmul_t(self: Self, comptime outdim: usize, other: Tensor(device, T, 2, [2]usize{ outdim, shape[0] }), out: Tensor(device, T, 2, [2]usize{ shape[0], outdim }), realdevice: anytype) !void {
+        pub fn matmul_t(self: Self, comptime outdim: Dim, other: Tensor(device, T, 2, [2]Dim{ outdim, shape[0] }), out: Tensor(device, T, 2, [2]Dim{ shape[0], outdim }), realdevice: anytype) !void {
             std.debug.assert(rank == 2);
-            const m = shape[0];
-            const k = shape[shape.len - 1];
-            const n = outdim;
+            const m = shape[0].value;
+            const k = shape[shape.len - 1].value;
+            const n = outdim.value;
             const lda = (k + 16 - 1) / 16;
             const ldb = (n + 16 - 1) / 16;
             const ldc = (n + 16 - 1) / 16;
