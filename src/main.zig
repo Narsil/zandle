@@ -31,9 +31,9 @@ pub fn main() !void {
     const cpu_B = try cpu_allocator.empty(f16, rank, [rank]z.Dim{ N, K });
     defer cpu_allocator.free(cpu_B);
     for (cpu_B.data.dataptr, 0..) |*bp, i| {
-        const j = i % K.value;
-        const ii = i / K.value;
-        const i_transposed = j * N.value + ii;
+        const j = i % K.value.?;
+        const ii = i / K.value.?;
+        const i_transposed = j * N.value.? + ii;
         bp.* = @as(dtype, @floatFromInt(i_transposed));
     }
 

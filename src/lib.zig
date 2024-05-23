@@ -7,8 +7,24 @@ pub const gemm = @cImport({
 });
 pub const err = @import("error.zig");
 
-pub const Dim = struct { name: u8, value: usize };
+pub const Dim = struct { name: u8, value: ?usize };
 
+pub fn RuntimePtr(comptime T: type) type {
+    return struct {
+        devptr: cu.CUdeviceptr,
+        n: usize,
+        pub const Ptr = cu.CUdeviceptr;
+
+        const Self = @This();
+        fn ptr(self: Self) Ptr {
+            return self.devptr;
+        }
+
+        fn byte_size(self: Self) usize {
+            return self.n * @sizeOf(T);
+        }
+    };
+}
 pub fn SizedPtr(comptime T: type, comptime n: usize) type {
     return struct {
         devptr: cu.CUdeviceptr,
@@ -51,10 +67,17 @@ pub const Device = union(enum) {
             .cuda => return Cuda(self.cuda),
         }
     }
-    pub fn data_type(comptime self: Self, comptime T: type, comptime n: usize) type {
-        switch (self) {
-            .cpu => return CpuSizedPtr(T, n),
-            .cuda => return SizedPtr(T, n),
+    pub fn data_type(comptime self: Self, comptime T: type, comptime cn: ?usize) type {
+        if (cn) |n| {
+            switch (self) {
+                .cpu => return CpuSizedPtr(T, n),
+                .cuda => return SizedPtr(T, n),
+            }
+        } else {
+            switch (self) {
+                .cpu => return []T,
+                .cuda => return RuntimePtr(T),
+            }
         }
     }
 };
@@ -104,6 +127,13 @@ pub fn Cuda(comptime device_id: c_int) type {
         pub const Allocator = struct {
             device: Self,
 
+            fn dynalloc(self: Allocator, comptime T: type, n: usize) !RuntimePtr(T) {
+                var ptr: cu.CUdeviceptr = undefined;
+                const bytes = n * @sizeOf(T);
+                try err.Cuda(cu.cuMemAllocAsync(&ptr, bytes, self.device.stream));
+                return RuntimePtr(T){ .n = n, .devptr = ptr };
+            }
+
             fn alloc(self: Allocator, comptime T: type, comptime n: usize) !SizedPtr(T, n) {
                 var ptr: cu.CUdeviceptr = undefined;
                 const bytes = n * @sizeOf(T);
@@ -111,16 +141,22 @@ pub fn Cuda(comptime device_id: c_int) type {
                 return SizedPtr(T, n){ .devptr = ptr };
             }
 
-            fn zero_alloc(self: Allocator, comptime T: type, comptime n: usize) !SizedPtr(T, n) {
-                const ptr = try self.alloc(T, n);
-                try err.Cuda(cu.cuMemsetD8Async(ptr.ptr, 0, ptr.len(), self.device.stream));
-                return ptr;
-            }
+            // fn zero_alloc(self: Allocator, comptime T: type, comptime n: usize) !SizedPtr(T, n) {
+            //     const ptr = try self.alloc(T, n);
+            //     try err.Cuda(cu.cuMemsetD8Async(ptr.ptr, 0, ptr.len(), self.device.stream));
+            //     return ptr;
+            // }
 
             pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
-                const nelements = comptime total_size(&shape);
-                const data = try self.alloc(T, nelements);
-                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                const comptime_nelements = comptime total_size(&shape);
+                if (comptime_nelements) |n| {
+                    const data = try self.alloc(T, n);
+                    return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                } else {
+                    const nelements = total_size(&shape).?;
+                    const data = try self.dynalloc(T, nelements);
+                    return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                }
             }
 
             pub fn free(self: Allocator, ptr: anytype) void {
@@ -151,12 +187,19 @@ pub const Cpu = struct {
         alloc: std.mem.Allocator,
         device: Cpu,
         pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
-            const n = comptime total_size(&shape);
-            const slice = try self.alloc.alloc(T, n);
-            // @memset(slice, 0);
-            const data = CpuSizedPtr(T, n){ .dataptr = slice };
-            return Tensor(device_enum, T, rank, shape).init(data, self.device);
+            const cn = comptime total_size(&shape);
+            if (cn) |n| {
+                const slice = try self.alloc.alloc(T, n);
+                const DataType = CpuSizedPtr(T, n);
+                const data = DataType{ .dataptr = slice };
+                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+            } else {
+                const n = total_size(&shape).?;
+                const data = try self.alloc.alloc(T, n);
+                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+            }
         }
+
         pub fn free(self: Allocator, data: anytype) void {
             self.alloc.free(data.data.dataptr);
         }
@@ -180,10 +223,10 @@ pub const Cpu = struct {
     }
 };
 
-fn total_size(shape: []const Dim) usize {
+fn total_size(shape: []const Dim) ?usize {
     var total = 1;
     for (shape) |dim| {
-        total *= dim.value;
+        total *= dim.value orelse return null;
     }
     return total;
 }
@@ -216,9 +259,9 @@ pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, c
 
         pub fn matmul_t(self: Self, comptime outdim: Dim, other: Tensor(device, T, 2, [2]Dim{ outdim, shape[1] }), out: Tensor(device, T, 2, [2]Dim{ shape[0], outdim }), realdevice: anytype) !void {
             std.debug.assert(rank == 2);
-            const m = shape[shape.len - 2].value;
-            const k = shape[shape.len - 1].value;
-            const n = outdim.value;
+            const m = shape[shape.len - 2].value.?;
+            const k = shape[shape.len - 1].value.?;
+            const n = outdim.value.?;
             const lda = (k + 16 - 1) / 16;
             const ldb = (n + 16 - 1) / 16;
             const ldc = (n + 16 - 1) / 16;
