@@ -42,6 +42,19 @@ pub fn SizedPtr(comptime T: type, comptime n: usize) type {
     };
 }
 
+pub fn CpuRuntimePtr(comptime T: type) type {
+    return struct {
+        dataptr: []T,
+        pub const Ptr = []T;
+        const Self = @This();
+        fn ptr(self: Self) Ptr {
+            return self.dataptr;
+        }
+        fn byte_size(self: Self) usize {
+            return self.dataptr.len * @sizeOf(T);
+        }
+    };
+}
 pub fn CpuSizedPtr(comptime T: type, comptime n: usize) type {
     return struct {
         dataptr: []T,
@@ -75,7 +88,7 @@ pub const Device = union(enum) {
             }
         } else {
             switch (self) {
-                .cpu => return []T,
+                .cpu => return CpuRuntimePtr(T),
                 .cuda => return RuntimePtr(T),
             }
         }
@@ -147,15 +160,15 @@ pub fn Cuda(comptime device_id: c_int) type {
             //     return ptr;
             // }
 
-            pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
+            pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim, rshape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
                 const comptime_nelements = comptime total_size(&shape);
                 if (comptime_nelements) |n| {
                     const data = try self.alloc(T, n);
-                    return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                    return Tensor(device_enum, T, rank, shape).init(rshape, data, self.device);
                 } else {
-                    const nelements = total_size(&shape).?;
+                    const nelements = total_size(&rshape).?;
                     const data = try self.dynalloc(T, nelements);
-                    return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                    return Tensor(device_enum, T, rank, shape).init(rshape, data, self.device);
                 }
             }
 
@@ -186,17 +199,19 @@ pub const Cpu = struct {
     const Allocator = struct {
         alloc: std.mem.Allocator,
         device: Cpu,
-        pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
+        pub fn empty(self: Allocator, comptime T: type, comptime rank: usize, comptime shape: [rank]Dim, rshape: [rank]Dim) !Tensor(device_enum, T, rank, shape) {
             const cn = comptime total_size(&shape);
             if (cn) |n| {
                 const slice = try self.alloc.alloc(T, n);
                 const DataType = CpuSizedPtr(T, n);
                 const data = DataType{ .dataptr = slice };
-                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                return Tensor(device_enum, T, rank, shape).init(rshape, data, self.device);
             } else {
-                const n = total_size(&shape).?;
-                const data = try self.alloc.alloc(T, n);
-                return Tensor(device_enum, T, rank, shape).init(data, self.device);
+                const n = total_size(&rshape).?;
+                const slice = try self.alloc.alloc(T, n);
+                const data = CpuRuntimePtr(T){ .dataptr = slice };
+
+                return Tensor(device_enum, T, rank, shape).init(rshape, data, self.device);
             }
         }
 
@@ -224,7 +239,7 @@ pub const Cpu = struct {
 };
 
 fn total_size(shape: []const Dim) ?usize {
-    var total = 1;
+    var total: usize = 1;
     for (shape) |dim| {
         total *= dim.value orelse return null;
     }
@@ -238,10 +253,11 @@ pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, c
     return struct {
         device: DeviceType,
         data: DataType,
+        shape: [rank]Dim,
         const Self = @This();
 
-        fn init(data: device.data_type(T, nelements), realdevice: anytype) !Self {
-            return Self{ .data = data, .device = realdevice };
+        fn init(rshape: [rank]Dim, data: device.data_type(T, nelements), realdevice: anytype) !Self {
+            return Self{ .shape = rshape, .data = data, .device = realdevice };
         }
 
         fn ptr(self: Self) DataType.Ptr {
@@ -259,9 +275,9 @@ pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, c
 
         pub fn matmul_t(self: Self, comptime outdim: Dim, other: Tensor(device, T, 2, [2]Dim{ outdim, shape[1] }), out: Tensor(device, T, 2, [2]Dim{ shape[0], outdim }), realdevice: anytype) !void {
             std.debug.assert(rank == 2);
-            const m = shape[shape.len - 2].value.?;
-            const k = shape[shape.len - 1].value.?;
-            const n = outdim.value.?;
+            const m = shape[shape.len - 2].value orelse self.shape[shape.len - 2].value.?;
+            const k = shape[shape.len - 1].value orelse self.shape[shape.len - 1].value.?;
+            const n = outdim.value orelse other.shape[0].value.?;
             const lda = (k + 16 - 1) / 16;
             const ldb = (n + 16 - 1) / 16;
             const ldc = (n + 16 - 1) / 16;
