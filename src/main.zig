@@ -4,9 +4,9 @@ const z = @import("lib.zig");
 pub fn main() !void {
     const dtype = f16;
     const rank = 2;
-    const M = z.Dim{ .value = 8 };
-    const N = z.Dim{ .value = 8 };
-    const K = z.Dim{ .value = 8 };
+    const M = z.Dim{ .name = 'M', .value = 8 };
+    const N = z.Dim{ .name = 'N', .value = 8 };
+    const K = z.Dim{ .name = 'K', .value = 8 };
 
     const cuda_0 = try z.Cuda(0).create();
     const gpu_allocator = cuda_0.allocator();
@@ -37,7 +37,7 @@ pub fn main() !void {
         bp.* = @as(dtype, @floatFromInt(i_transposed));
     }
 
-    const B = try gpu_allocator.empty(f16, rank, [rank]z.Dim{ M, K });
+    const B = try gpu_allocator.empty(f16, rank, [rank]z.Dim{ N, K });
     defer gpu_allocator.free(B);
     try B.copy_from_device(@TypeOf(cpu).device_enum, &cpu_B);
 

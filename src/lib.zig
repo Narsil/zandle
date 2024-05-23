@@ -7,7 +7,7 @@ pub const gemm = @cImport({
 });
 pub const err = @import("error.zig");
 
-pub const Dim = struct { value: usize };
+pub const Dim = struct { name: u8, value: usize };
 
 pub fn SizedPtr(comptime T: type, comptime n: usize) type {
     return struct {
@@ -214,9 +214,9 @@ pub fn Tensor(comptime device: Device, comptime T: type, comptime rank: usize, c
             return self.device.copy_from(self.data.ptr(), otherdevice, other);
         }
 
-        pub fn matmul_t(self: Self, comptime outdim: Dim, other: Tensor(device, T, 2, [2]Dim{ outdim, shape[0] }), out: Tensor(device, T, 2, [2]Dim{ shape[0], outdim }), realdevice: anytype) !void {
+        pub fn matmul_t(self: Self, comptime outdim: Dim, other: Tensor(device, T, 2, [2]Dim{ outdim, shape[1] }), out: Tensor(device, T, 2, [2]Dim{ shape[0], outdim }), realdevice: anytype) !void {
             std.debug.assert(rank == 2);
-            const m = shape[0].value;
+            const m = shape[shape.len - 2].value;
             const k = shape[shape.len - 1].value;
             const n = outdim.value;
             const lda = (k + 16 - 1) / 16;
