@@ -46,15 +46,3 @@ void launch_simple_gemm_tt(size_t m, size_t n, size_t k, T const* alpha,
         m, n, k, *alpha, A, lda, B, ldb, *beta, C, ldc);
 }
 
-// Explicit instantiation.
-extern "C" {
-void launch_simple_gemm_tt_half(size_t m, size_t n, size_t k,
-                                            __half const* alpha,
-                                            __half const* A, size_t lda,
-                                            __half const* B, size_t ldb,
-                                            __half const* beta, __half* C,
-                                            size_t ldc, cudaStream_t stream){
-    launch_simple_gemm_tt<__half>(m, n, k, alpha, A, lda, B, ldb, beta, C, ldc, stream);
-}
-}
-

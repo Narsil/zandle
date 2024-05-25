@@ -1,9 +1,13 @@
 const std = @import("std");
 const z = @import("lib.zig");
+const kernel_comptime = @import("kernel_comptime.zig");
 
 var Kvalue: usize = 0;
 
 pub fn main() !void {
+    if (kernel_comptime.IS_COMPILING) {
+        kernel_comptime.start();
+    }
     const dtype = f16;
     const rank = 2;
     const M = comptime z.Dim.static('M', 8);
@@ -51,12 +55,17 @@ pub fn main() !void {
     try cuda_0.synchronize();
 
     try A.matmul_t(N, B, C, cuda_0);
+    try A.matmul_t(N, B, C, cuda_0);
 
     const cpu_C = try cpu_allocator.empty(f16, rank, [rank]z.Dim{ M, N });
     defer cpu_allocator.free(cpu_C);
     try cpu_C.copy_from_device(@TypeOf(cuda_0).device_enum, &C);
 
-    std.debug.print("{any}\n", .{cpu_A.data.dataptr});
-    std.debug.print("{any}\n", .{cpu_B.data.dataptr});
-    std.debug.print("{any}\n", .{cpu_C.data.dataptr});
+    if (kernel_comptime.IS_COMPILING) {
+        try kernel_comptime.finish();
+    } else {
+        std.debug.print("{any}\n", .{cpu_A.data.dataptr});
+        std.debug.print("{any}\n", .{cpu_B.data.dataptr});
+        std.debug.print("{any}\n", .{cpu_C.data.dataptr});
+    }
 }

@@ -4,6 +4,10 @@ const std = @import("std");
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) !void {
+    const cuda_path: []const u8 = try std.process.getEnvVarOwned(b.allocator, "CUDA");
+    const cuda_include_dir = try std.fmt.allocPrint(b.allocator, "{s}/include", .{cuda_path});
+    const cuda_lib_dir = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{cuda_path});
+
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -14,6 +18,27 @@ pub fn build(b: *std.Build) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
+
+    const precompilation = b.addExecutable(.{
+        .name = "zandle_precompilation",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    const preoptions = b.addOptions();
+    preoptions.addOption(bool, "kernel_compilation", true);
+    precompilation.root_module.addOptions("config", preoptions);
+
+    precompilation.addIncludePath(.{ .path = cuda_include_dir });
+    precompilation.addLibraryPath(.{ .path = cuda_lib_dir });
+    precompilation.linkSystemLibrary("cuda");
+    precompilation.linkLibC();
+    precompilation.linkLibCpp();
+    const tool_step = b.addRunArtifact(precompilation);
+    const output = tool_step.captureStdOut();
+    const copy = b.addInstallFileWithDir(output, .prefix, "out.cu");
 
     const tool_run = b.addSystemCommand(&.{"nvcc"});
     const cwd = std.fs.cwd();
@@ -26,14 +51,15 @@ pub fn build(b: *std.Build) !void {
         "--shared",
         "--gpu-architecture",
         "sm_89",
-        "src/gemm.cu",
+        "zig-out/out.cu",
         "-IThunderKittens/src/",
+        "-Isrc/",
         "--expt-relaxed-constexpr",
         "--std=c++20",
     });
+    tool_run.step.dependOn(&copy.step);
     tool_run.expectExitCode(0);
-    const dependency: []const u8 = "src/gemm.cu";
-    const dependencies = [1][]const u8{dependency};
+    const dependencies = [2][]const u8{ "src/gemm.cu", "zig-out/out.cu" };
     tool_run.extra_file_dependencies = &dependencies;
 
     const exe = b.addExecutable(.{
@@ -44,9 +70,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    const cuda_path: []const u8 = try std.process.getEnvVarOwned(b.allocator, "CUDA");
-    const cuda_include_dir = try std.fmt.allocPrint(b.allocator, "{s}/include", .{cuda_path});
-    const cuda_lib_dir = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{cuda_path});
     exe.addIncludePath(.{ .path = cuda_include_dir });
     exe.addIncludePath(.{ .path = "src/" });
     exe.addLibraryPath(.{ .path = "zig-out/lib/" });
@@ -55,6 +78,9 @@ pub fn build(b: *std.Build) !void {
     exe.linkSystemLibrary("tkgemm");
     exe.linkLibCpp();
     exe.linkLibC();
+    const options = b.addOptions();
+    options.addOption(bool, "kernel_compilation", false);
+    exe.root_module.addOptions("config", options);
     exe.step.dependOn(&tool_run.step);
 
     // This declares intent for the executable to be installed into the
